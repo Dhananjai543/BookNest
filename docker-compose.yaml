@@ -1,0 +1,214 @@
+services:
+  ## ---------- Datastores ----------
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./data/mongo:/data/db
+    networks:
+      - booknest-network
+
+  postgres-loan:
+    image: postgres:16
+    container_name: postgres-loan
+    environment:
+      POSTGRES_DB: loan_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5431:5432"
+    volumes:
+      - ./data/postgres-loan:/var/lib/postgresql/data
+    networks:
+      - booknest-network
+
+  postgres-availability:
+    image: postgres:16
+    container_name: postgres-availability
+    environment:
+      POSTGRES_DB: availability_service
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres-availability:/var/lib/postgresql/data
+    networks:
+      - booknest-network
+
+  keycloak-postgres:
+    image: postgres:16
+    container_name: keycloak-postgres
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - ./data/keycloak-postgres:/var/lib/postgresql/data
+    networks:
+      - booknest-network
+
+  ## ---------- Messaging ----------
+  broker:
+    image: apache/kafka:3.8.0
+    container_name: broker
+    hostname: broker
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - booknest-network
+
+  ## ---------- Identity ----------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    container_name: keycloak
+    command: [ "start-dev", "--import-realm" ]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realms:/opt/keycloak/data/import
+    depends_on:
+      - keycloak-postgres
+    networks:
+      - booknest-network
+
+  ## ---------- Service Discovery ----------
+  discovery-server:
+    image: booknest/discovery-server
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - booknest-network
+
+  ## ---------- API Gateway ----------
+  api-gateway:
+    image: booknest/api-gateway
+    container_name: api-gateway
+    ports:
+      - "8181:8181"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - discovery-server
+      - keycloak
+    networks:
+      - booknest-network
+
+  ## ---------- Business Services ----------
+  book-catalog-service:
+    image: booknest/book-catalog-service
+    container_name: book-catalog-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - mongo
+      - discovery-server
+      - api-gateway
+    networks:
+      - booknest-network
+
+  availability-service:
+    image: booknest/availability-service
+    container_name: availability-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - postgres-availability
+      - discovery-server
+      - api-gateway
+    networks:
+      - booknest-network
+
+  loan-service:
+    image: booknest/loan-service
+    container_name: loan-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - postgres-loan
+      - broker
+      - discovery-server
+      - api-gateway
+    networks:
+      - booknest-network
+
+  notification-service:
+    image: booknest/notification-service
+    container_name: notification-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - broker
+      - discovery-server
+      - api-gateway
+    networks:
+      - booknest-network
+
+  ## ---------- Observability ----------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - book-catalog-service
+      - availability-service
+      - loan-service
+      - notification-service
+      - api-gateway
+    networks:
+      - booknest-network
+
+  grafana:
+    image: grafana/grafana-oss:11.1.0
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - booknest-network
+
+networks:
+  booknest-network:
+    name: booknest-network
+    driver: bridge

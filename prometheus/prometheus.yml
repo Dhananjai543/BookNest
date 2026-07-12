@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: 'book-catalog-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['book-catalog-service:8080']
+        labels:
+          application: 'Book Catalog Service'
+
+  - job_name: 'availability-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['availability-service:8082']
+        labels:
+          application: 'Availability Service'
+
+  - job_name: 'loan-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['loan-service:8081']
+        labels:
+          application: 'Loan Service'
+
+  - job_name: 'notification-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['notification-service:8083']
+        labels:
+          application: 'Notification Service'
+
+  - job_name: 'api-gateway'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['api-gateway:8181']
+        labels:
+          application: 'API Gateway'
