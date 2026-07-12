@@ -4,11 +4,14 @@ import com.booknest.loanservice.dto.AvailabilityResponseDto;
 import com.booknest.loanservice.dto.LoanLineItemsDto;
 import com.booknest.loanservice.dto.LoanRequestDto;
 import com.booknest.loanservice.dto.LoanResponseDto;
+import com.booknest.loanservice.event.LoanItem;
+import com.booknest.loanservice.event.LoanPlacedEvent;
 import com.booknest.loanservice.model.Loan;
 import com.booknest.loanservice.model.LoanLineItems;
 import com.booknest.loanservice.repository.LoanRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -25,6 +28,7 @@ public class LoanService {
 
     private final LoanRepository loanRepository;
     private final WebClient.Builder webClientBuilder;
+    private final KafkaTemplate<String, LoanPlacedEvent> kafkaTemplate;
 
     public boolean placeLoan(LoanRequestDto request) {
         Loan loan = new Loan();
@@ -48,7 +52,12 @@ public class LoanService {
         if (allAvailable) {
             loanRepository.save(loan);
             log.info("Loan {} placed for member {}", loan.getLoanNumber(), loan.getMemberId());
-            // publish LoanPlacedEvent to Kafka 
+            List<LoanItem> eventItems = loan.getLoanLineItemsList().stream()
+                    .map(li -> new LoanItem(li.getIsbn(), li.getQuantity()))
+                    .toList();
+            kafkaTemplate.send("notificationTopic",
+                    new LoanPlacedEvent(loan.getLoanNumber(), loan.getMemberId(), eventItems));
+            log.info("LoanPlacedEvent published for loan {}", loan.getLoanNumber());
             return true;
         }
         return false;
